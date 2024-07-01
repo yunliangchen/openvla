@@ -17,6 +17,38 @@ Run with:
                                     --dataset_name <DATASET_NAME> \
                                     --run_root_dir <PATH/TO/LOGS/DIR> \
                                     ...
+
+    torchrun --standalone --nnodes 1 --nproc-per-node 1 vla-scripts/finetune.py \
+                                    --data_root_dir ~/tensorflow_datasets/ \
+                                    --dataset_name robomimic_lift_dataset \
+                                    --run_root_dir /home/lawchen/project/openvla/logs \
+                                    --batch_size 1 \
+                                    --grad_accumulation_steps 128 \
+                                    --save_steps 3200 \
+                                    --learning_rate 2e-5 \
+                                    --max_steps 100000 \
+                                    --vla_path /home/lawchen/project/openvla/logs/openvla-7b+robomimic_lift_dataset+b128+lr-2e-05+lora-r32+dropout-0.0
+
+
+    torchrun --standalone --nnodes 1 --nproc-per-node 1 vla-scripts/finetune.py \
+                                    --data_root_dir /home/lawchen/project/oxe_datasets/ \
+                                    --dataset_name austin_buds_dataset_converted_externally_to_rlds \
+                                    --run_root_dir /home/lawchen/project/openvla/logs \
+                                    --batch_size 1 \
+                                    --grad_accumulation_steps 16 \
+                                    --save_steps 512 \
+                                    --learning_rate 2e-5 \
+                                    --max_steps 100000 
+
+    torchrun --standalone --nnodes 1 --nproc-per-node 1 vla-scripts/finetune.py \
+                                    --data_root_dir /home/lawchen/tensorflow_datasets/ \
+                                    --dataset_name r2_d2 \
+                                    --run_root_dir /home/lawchen/project/openvla/logs \
+                                    --batch_size 1 \
+                                    --grad_accumulation_steps 16 \
+                                    --save_steps 512 \
+                                    --learning_rate 2e-5 \
+                                    --max_steps 100000 
 """
 
 import os
@@ -95,7 +127,7 @@ class FinetuneConfig:
 
     # Tracking Parameters
     wandb_project: str = "openvla"                                  # Name of W&B project to log to (use default!)
-    wandb_entity: str = "stanford-voltron"                          # Name of entity to log under
+    wandb_entity: str = "wire_harness"                          # Name of entity to log under
 
     # fmt: on
 
@@ -117,7 +149,7 @@ def finetune(cfg: FinetuneConfig) -> None:
         f"+lr-{cfg.learning_rate}"
     )
     if cfg.use_lora:
-        exp_id += f"+lora-r{cfg.lora_rank}+dropout-{cfg.lora_dropout}"
+        exp_id += f"+lora-r{cfg.lora_rank}+dropout-{cfg.lora_dropout}+gradaccumbugfix"
     if cfg.use_quantization:
         exp_id += "+q-4bit"
 
