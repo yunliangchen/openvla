@@ -16,6 +16,8 @@ num_steps = len(traj[f"data/{traj_id}/actions"][()])
 # breakpoint()
 
 openvla_path_base = "openvla/openvla-7b"
+# openvla_path_base = "/home/lawchen/project/openvla/logs/openvla-7b+robomimic_lift_dataset_subsampled50_cams+b32+lr-0.0005+lora-r32+dropout-0.0+wrist"
+
 # openvla_path = "/home/lawchen/project/openvla/logs/openvla-7b+robomimic_lift_dataset+b16+lr-3e-05+lora-r32+dropout-0.0"
 # openvla_path1 = "/home/lawchen/project/openvla/logs/openvla-7b+robomimic_lift_dataset+b128+lr-2e-05+lora-r32+dropout-0.0"
 openvla_path = "/lustre/fsw/portfolios/nvr/users/lawchen/project/openvla/openvla/logs/openvla-7b+robomimic_lift_dataset_subsampled50_cams+b32+lr-0.0005+lora-r32+dropout-0.0+wrist+robomimic_lift_dataset_subsampled50_cams+b32+lr-0.0005+lora-r32+dropout-0.0+wrist"
