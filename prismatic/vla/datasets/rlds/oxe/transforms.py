@@ -841,6 +841,25 @@ def robomimic_lift_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, An
     trajectory["language_instruction"] = trajectory["language_instruction"]
     return trajectory
 
+
+def icrl_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
+    trajectory["observation"]["proprio"] = trajectory["observation"]["proprio"]
+
+    # gripper action is in 0 (open)...1 (close) --> flip --> +1 = open, 0 = close
+    gripper_action = trajectory["action"][:, -1:]
+    gripper_action = invert_gripper_actions(tf.clip_by_value(gripper_action, 0, 1))
+
+    trajectory["action"] = tf.concat(
+        (
+            trajectory["action"][:, :6],
+            gripper_action,
+        ),
+        axis=-1,
+    )
+    trajectory["language_instruction"] = trajectory["language_instruction"]
+    return trajectory
+
+
 # === Registry ===
 OXE_STANDARDIZATION_TRANSFORMS = {
     "bridge_oxe": bridge_oxe_dataset_transform,
@@ -916,7 +935,11 @@ OXE_STANDARDIZATION_TRANSFORMS = {
     "droid_wipe": droid_finetuning_transform,
     ### Robosuite datasets
     "robomimic_lift_dataset": robomimic_lift_dataset_transform,
+    "robomimic_lift_dataset_subsampled50_cams": robomimic_lift_dataset_transform,
+    "robomimic_lift_dataset500_cams_part2": robomimic_lift_dataset_transform,
     ### r2d2 datasets
     "r2_d2": droid_finetuning_transform,
     "tiger_dataset": droid_finetuning_transform,
+    ### ICRL datasets
+    "icrl_vla_tfds": icrl_dataset_transform,
 }

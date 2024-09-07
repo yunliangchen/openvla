@@ -55,6 +55,9 @@ import os
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
+import signal
+import numpy as np
+from socket import gethostname
 
 import draccus
 import torch
@@ -98,6 +101,24 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 # # fmt: on
 
 
+def init_seeds(seed):
+    # refer to https://pytorch.org/docs/stable/notes/randomness.html
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
+    os.environ["CUBLAS_WORKSPACE_CONFIG"] =":16:8"
+    torch.use_deterministic_algorithms(mode=True, warn_only=True)
+
+
+
+def setup(rank, world_size):
+    # initialize the process group
+    dist.init_process_group("nccl", rank=rank, world_size=world_size)
+
+
+
+
 @dataclass
 class FinetuneConfig:
     # fmt: off
@@ -139,6 +160,9 @@ def finetune(cfg: FinetuneConfig) -> None:
     # [Validate] Ensure GPU Available & Set Device / Distributed Context
     assert torch.cuda.is_available(), "Fine-tuning assumes at least one GPU is available!"
     distributed_state = PartialState()
+
+    # assert local_rank == distributed_state.local_process_index
+
     torch.cuda.set_device(device_id := distributed_state.local_process_index)
     torch.cuda.empty_cache()
 
@@ -149,7 +173,7 @@ def finetune(cfg: FinetuneConfig) -> None:
         f"+lr-{cfg.learning_rate}"
     )
     if cfg.use_lora:
-        exp_id += f"+lora-r{cfg.lora_rank}+dropout-{cfg.lora_dropout}+gradaccumbugfix"
+        exp_id += f"+lora-r{cfg.lora_rank}+dropout-{cfg.lora_dropout}+wrist+raw_action+16step"
     if cfg.use_quantization:
         exp_id += "+q-4bit"
 
@@ -279,7 +303,10 @@ def finetune(cfg: FinetuneConfig) -> None:
             normalized_loss.backward()
 
             # Compute Accuracy and L1 Loss for Logging
-            action_logits = output.logits[:, vla.module.vision_backbone.featurizer.patch_embed.num_patches : -1]
+            # use 1 image
+            # action_logits = output.logits[:, vla.module.vision_backbone.featurizer.patch_embed.num_patches: -1]
+            # use 2 images
+            action_logits = output.logits[:, vla.module.vision_backbone.featurizer.patch_embed.num_patches * 2: -1]
             action_preds = action_logits.argmax(dim=2)
             action_gt = batch["labels"][:, 1:].to(action_preds.device)
             mask = action_gt > action_tokenizer.action_token_begin_idx
@@ -327,6 +354,8 @@ def finetune(cfg: FinetuneConfig) -> None:
             # Save Model Checkpoint =>> by default, only keeps the latest checkpoint, continually overwriting it!
             if gradient_step_idx > 0 and gradient_step_idx % cfg.save_steps == 0:
                 if distributed_state.is_main_process:
+                    # assert rank == 0
+                    # print("Rank 0")
                     print(f"Saving Model Checkpoint for Step {gradient_step_idx}")
 
                     # If LoRA, we first save adapter weights, then merge into full model; otherwise, default save!
@@ -341,7 +370,7 @@ def finetune(cfg: FinetuneConfig) -> None:
 
                 # Merge LoRA weights into model backbone for faster inference
                 #   =>> Note that merging is slow and can be done post-hoc to speed up training
-                if cfg.use_lora:
+                if cfg.use_lora and False:
                     base_vla = AutoModelForVision2Seq.from_pretrained(
                         cfg.vla_path, torch_dtype=torch.bfloat16, low_cpu_mem_usage=True, trust_remote_code=True
                     )
@@ -352,7 +381,72 @@ def finetune(cfg: FinetuneConfig) -> None:
 
                 # Block on Main Process Checkpointing
                 dist.barrier()
+    #         if terminate_flag:
+    #             break
+
+    # dist.destroy_process_group()
 
 
 if __name__ == "__main__":
+    # global terminate_flag
+    # global batch
+    # terminate_flag = False
+    # batch = 0
+
+    # def termination_handler(sig, _):
+    #     # Handler to save the model, optimizer, epoch and scheduler
+    #     # and terminate the run. This is triggered by SIGTERM sent
+    #     # by Slurm indicating that the job needs to finish.
+    #     global terminate_flag
+    #     global batch
+
+    #     if sig == signal.SIGTERM and rank == 0 and not terminate_flag:
+    #         print("SIGTERM received")
+    #         if args.save_model:
+    #             if batch == 0:
+    #                 # End of an epoch. Normal save
+    #                 ckpt = {
+    #                     "epoch": epoch,
+    #                     "batch": batch,
+    #                     "model": ddp_model.module.state_dict(),
+    #                     "optimizer": optimizer.state_dict(),
+    #                     "scheduler": scheduler.state_dict()
+    #                 }
+    #             else: 
+    #                 # Middle of an epoch
+    #                 ckpt = {
+    #                     "epoch": epoch - 1,
+    #                     "batch": batch,
+    #                     "model": ddp_model.module.state_dict(),
+    #                     "optimizer": optimizer.state_dict(),
+    #                     "scheduler": scheduler.state_dict()
+    #                 }
+    #             print(f"Saving checkpoint at {args.checkpoint}")
+    #             print(f"Saving epoch: {epoch}")
+    #             print(f"Saving batch: {batch}")
+    #             torch.save(ckpt, f"{args.checkpoint}")
+    #         terminate_flag = True
+    #         # time.sleep(10)
+    #         # sys.exit()
+
+    # signal.signal(signal.SIGTERM, termination_handler)
+
+    # init_seeds(42)  # Initialize seeds in torch. This is import for DataLoader
+    #                 # such that batches resume correctly after interrupted by time 
+    #                 # limit in ORD.
+
+    # world_size = int(os.environ["WORLD_SIZE"])
+    # rank = int(os.environ["SLURM_PROCID"])
+    # gpus_per_node = int(os.environ["SLURM_GPUS_ON_NODE"])
+    # assert gpus_per_node == torch.cuda.device_count()
+    # print(f"Hello from rank {rank} of {world_size} on {gethostname()} where there are" \
+    #       f" {gpus_per_node} allocated GPUs per node.", flush=True)
+
+    # setup(rank, world_size)
+    # if rank == 0: print(f"Group initialized? {dist.is_initialized()}", flush=True)
+
+    # local_rank = rank - gpus_per_node * (rank // gpus_per_node)
+    # torch.cuda.set_device(local_rank)
+    # print(f"host: {gethostname()}, rank: {rank}, local_rank: {local_rank}")
+
     finetune()

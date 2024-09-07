@@ -192,5 +192,15 @@ OXE_NAMED_MIXTURES: Dict[str, List[Tuple[str, float]]] = {
     "droid_wipe": [
         ("droid_wipe", 1.0),
     ],
+
+
+
+    # === Robomimic Finetuning Datasets ===
+    "robomimic_lift_dataset": [
+        ("robomimic_lift_dataset", 1.0),
+    ],
+    "robomimic_lift_dataset_subsampled50_cams": [
+        ("robomimic_lift_dataset_subsampled50_cams", 1.0),
+    ],
 }
 # fmt: on

@@ -359,11 +359,20 @@ class PrismaticForConditionalGeneration(PrismaticPreTrainedModel):
             )
 
         # === Handle Multimodal Forward ===
-        elif (input_ids.shape[0] == pixel_values.shape[0]) or (inputs_embeds.shape[0] == pixel_values.shape[0]):
+        elif (input_ids.shape[0] == pixel_values.shape[0]) or (pixel_values.shape[0] == 2) or (inputs_embeds.shape[0] == pixel_values.shape[0]):
             assert past_key_values is None, "Unexpected key `past_key_values` provided during language-only forward!"
 
             # Visual Feature Extraction
-            patch_features = self.vision_backbone(pixel_values)
+            # 2 images: [2, 6, 224, 224] during inference, [batch, 2, 6, 224, 224] during training
+            if pixel_values.shape[-4] >= 2:
+                if pixel_values.dim() == 4: # inference
+                    patch_features = torch.cat(
+                        [self.vision_backbone(pixel_values[[i]]) for i in range(pixel_values.shape[0])], dim=1
+                    )
+                else: # dim == 5, has a batch dimension
+                    patch_features = torch.concatenate([self.vision_backbone(pixel_values[:, i, ...]) for i in range(pixel_values.shape[1])], dim=1)
+            else: # one image: [1, 6, 224, 224] during inference, [batch, 6, 224, 224] during training
+                patch_features = self.vision_backbone(pixel_values)
 
             # Projection Logic =>> Update Attention Mask
             projected_patch_embeddings = self.projector(patch_features)

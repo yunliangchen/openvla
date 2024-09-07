@@ -210,8 +210,8 @@ class PrismaticProcessor(ProcessorMixin):
         )
 
         # [Validate] Need same number of images and text inputs!
-        if pixel_values.shape[0] != text_inputs.input_ids.shape[0]:
-            raise ValueError("Batch is malformed; expected same number of images and text inputs!")
+        # if pixel_values.shape[0] != text_inputs.input_ids.shape[0]:
+        #     raise ValueError("Batch is malformed; expected same number of images and text inputs!")
 
         return BatchFeature(data={**text_inputs, "pixel_values": pixel_values})
 

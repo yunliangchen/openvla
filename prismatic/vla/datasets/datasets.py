@@ -27,6 +27,38 @@ from prismatic.vla.datasets.rlds.utils.data_utils import NormalizationType
 IGNORE_INDEX = -100
 
 
+def convert_delta_action(action, proprio):
+    """
+    Calculate the delta action given the action and proprioception
+    Gripper action remains as absolute action
+    action: S, T, 7 which is 3 translation + 3 Euler angles (XYZ) + gripper
+    proprio: S, T, 8 which is 3 translation + 4 quarternion (wxyz) + gripper
+    """
+    # print("action:", action)
+    from scipy.spatial.transform import Rotation
+    trans = action[..., :3].reshape(-1, 3)
+    rot = action[..., 3:6].reshape(-1, 3)
+    rot = Rotation.from_euler("XYZ", rot, degrees=False)
+    
+    current_state = np.repeat(proprio[:, 0:1],action.shape[1],1)
+    current_trans = current_state[..., :3].reshape(-1, 3)
+    current_rot = current_state[..., 3:7] # S, T, 4
+    current_rot = Rotation.from_quat(current_rot.reshape(-1, 4), scalar_first=True) # because wxyz
+    
+    delta_rot = (current_rot.inv()*rot).as_matrix()
+    delta_trans = np.einsum('ijk,ik->ij', current_rot.inv().as_matrix(),(trans-current_trans))
+
+    delta_rot = Rotation.from_matrix(delta_rot).as_euler("XYZ", degrees=False).reshape(-1, 3)
+    delta_trans = delta_trans.reshape(-1, 3)
+    
+    delta_action = np.concatenate([delta_trans, delta_rot, action[:,-1:]], axis=-1)
+    # print("delta_action:", delta_action)
+    return delta_action
+
+
+
+
+
 @dataclass
 class RLDSBatchTransform:
     action_tokenizer: ActionTokenizer
@@ -37,18 +69,33 @@ class RLDSBatchTransform:
 
     def __call__(self, rlds_batch: Dict[str, Any]) -> Dict[str, Any]:
         """Converts a RLDS batch to the format expected by the OpenVLA collator/models."""
-        dataset_name, action = rlds_batch["dataset_name"], rlds_batch["action"][0]
+        # rlds_batch["action"]: [1, 7], rlds_batch["observation"]["image_primary"]: [1, 224, 224, 3]
+        # rlds_batch["observation"]["proprio"]: [1, 8]
+        dataset_name, action = rlds_batch["dataset_name"], rlds_batch["action"].flatten()#[0]
         img = Image.fromarray(rlds_batch["observation"]["image_primary"][0])
+        img_wrist = Image.fromarray(rlds_batch["observation"]["image_wrist"][0])
+        proprio = rlds_batch["observation"]["proprio"][0]
         lang = rlds_batch["task"]["language_instruction"].decode().lower()
+        
+        # for converted delta action
+        # action = convert_delta_action(rlds_batch["action"], rlds_batch["observation"]["proprio"])[0]
+        # also need:
+        # openvla/openvla/prismatic/vla/datasets/rlds/oxe/materialize.py:L40-41 set action_normalization_mask to all False
+        # openvla/openvla/prismatic/vla/datasets/rlds/dataset.py:L242-249 comment normalize_action_and_proprio out
 
         # Construct Chat-based Prompt =>> Input is default query + language instruction, output are the action tokens
         prompt_builder = self.prompt_builder_fn("openvla")
         conversation = [
+            # {"from": "human", "value": f"The robot gripper quaternion is {proprio}. " + f"What action should the robot take to {lang}?"},
             {"from": "human", "value": f"What action should the robot take to {lang}?"},
             {"from": "gpt", "value": self.action_tokenizer(action)},
         ]
         for turn in conversation:
             prompt_builder.add_turn(turn["from"], turn["value"])
+
+        # with probability 0.1, save img
+        # if np.random.rand() < 0.1:
+        #     img.save(f"img_test.png")
 
         # Tokenize (w/ `base_tokenizer`)
         input_ids = self.base_tokenizer(prompt_builder.get_prompt(), add_special_tokens=True).input_ids
@@ -57,7 +104,11 @@ class RLDSBatchTransform:
         # Tensorize =>> Run Image Transform to get `pixel_values` =>> Return
         #   =>> IMPORTANT :: IF WE'RE USING HF LLM.forward(..., labels=labels), SHIFTING HAPPENS _INSIDE_ MODEL!
         input_ids, labels = torch.tensor(input_ids), torch.tensor(labels)
-        pixel_values = self.image_transform(img)
+        pixel_values = self.image_transform(img) # (6, 224, 224)
+        pixel_values_wrist = self.image_transform(img_wrist) # (6, 224, 224)
+
+        # prismatic/extern/hf/modeling_prismatic.py: PrismaticForConditionalGeneration.forward(), check whether it has extra dimension
+        pixel_values = torch.stack((pixel_values, pixel_values_wrist), dim=0) # (2, 6, 224, 224) 
 
         # [CRITICAL] We do not want to take the loss for anything but the predicted action tokens!
         labels[: -(len(action) + 1)] = IGNORE_INDEX
@@ -92,16 +143,16 @@ class RLDSDataset(IterableDataset):
         per_dataset_kwargs, weights = get_oxe_dataset_kwargs_and_weights(
             self.data_root_dir,
             mixture_spec,
-            load_camera_views=("primary",),
+            load_camera_views=("primary", "wrist"),
             load_depth=False,
-            load_proprio=False,
+            load_proprio=True,
             load_language=True,
             action_proprio_normalization_type=NormalizationType.BOUNDS_Q99,
         )
         rlds_config = dict(
             traj_transform_kwargs=dict(
-                window_size=1,                                      # If we wanted to feed / predict more than one step
-                future_action_window_size=0,                        # For action chunking
+                window_size=1,                                      # If we wanted to feed / predict more than one step (rlds_batch["observation"]["image_primary"].shape: [window_size, 224, 224, 3])
+                future_action_window_size=15,                        # For action chunking (rlds_batch["action"].shape: [window_size+future_action_window_size, 7])
                 skip_unlabeled=True,                                # Skip trajectories without language labels
                 goal_relabeling_strategy="uniform",                 # Goals are currently unused
             ),
